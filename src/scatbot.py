@@ -18,6 +18,7 @@ elif mode == 'prod':
         HEROKU_APP_NAME = os.environ.get('HEROKU_APP_NAME')
         app.start_webhook(listen='0.0.0.0', port=PORT, url_path=TOKEN)
         app.bot.set_webhook('https://{}.herokuapp.com/{}'.format(HEROKU_APP_NAME, TOKEN))
+        app.idle()
 else:
     logger.error('Invalid MODE value')
     sys.exit(1)
