@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
@@ -86,7 +87,7 @@ class Bot:
         self._updater.dispatcher.add_handler(CommandHandler('start', self._start_callback))
         self._updater.dispatcher.add_handler(MessageHandler(Filters.text, self._answer_callback))
 
-        with open('answers.yaml', encoding='utf-8') as answers_conf:
+        with Path.joinpath(Path(__file__).parent, 'answers.yaml').open(encoding='utf-8') as answers_conf:
             self._answers = yaml.load(answers_conf, Loader=yaml.Loader)
 
     def run(self):
