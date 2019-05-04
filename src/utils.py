@@ -26,4 +26,4 @@ def session_scope(factory):
         session.close()
 
 
-logger = config_logger('scatbot')
+LOGGER = config_logger('scatbot')

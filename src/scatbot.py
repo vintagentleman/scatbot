@@ -10,7 +10,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 import yaml
 
 from orm import User, Task, Word, Answer
-from utils import logger, session_scope
+from utils import LOGGER, session_scope
 
 
 class Bot:
@@ -25,10 +25,10 @@ class Bot:
         )
 
         if proc.returncode != 0 or proc.stdout is None:
-            logger.error('Failed to retrieve Heroku database URL. Aborting')
+            LOGGER.error('Failed to retrieve Heroku database URL. Aborting')
             sys.exit(1)
         else:
-            logger.info('Successfully retrieved Heroku database URL')
+            LOGGER.info('Successfully retrieved Heroku database URL')
             return proc.stdout.strip()
 
     def _send_task(self, update, context):
@@ -40,7 +40,7 @@ class Bot:
             word = session.query(Word).filter_by(task_id=task.id).order_by(func.random()).first()
             session.query(User).filter_by(id=update.effective_user.id).one().current_task = task.id
             context.bot.send_message(chat_id=update.message.chat_id, text=word.string)
-            logger.info('User {} received task {}'.format(update.effective_user.username, word.string))
+            LOGGER.info('User {} received task {}'.format(update.effective_user.username, word.string))
 
     def _save_answer(self, update):
         """
@@ -62,7 +62,7 @@ class Bot:
             session.query(User).filter_by(id=update.effective_user.id).one().tasks_done += 1
 
     def _start_callback(self, update, context):
-        logger.info('User {} started bot'.format(update.effective_user.username))
+        LOGGER.info('User {} started bot'.format(update.effective_user.username))
         context.bot.send_message(chat_id=update.message.chat_id, text=self._answers['start'])
 
         with session_scope(self._session) as session:
@@ -72,7 +72,7 @@ class Bot:
         self._send_task(update, context)
 
     def _answer_callback(self, update, context):
-        logger.info('User {} answered {}'.format(update.effective_user.username, update.message.text))
+        LOGGER.info('User {} answered {}'.format(update.effective_user.username, update.message.text))
         self._save_answer(update)
         self._send_task(update, context)
 
@@ -91,7 +91,7 @@ class Bot:
             self._answers = yaml.load(answers_conf, Loader=yaml.Loader)
 
     def run(self):
-        logger.info('Starting bot')
+        LOGGER.info('Starting bot')
 
         if MODE == 'dev':
             self._updater.start_polling()
@@ -108,7 +108,7 @@ if __name__ == '__main__':
     MODE = os.getenv('MODE')
 
     if MODE not in ('dev', 'prod'):
-        logger.error('Invalid MODE value. Aborting')
+        LOGGER.error('Invalid MODE value. Aborting')
         sys.exit(1)
 
     Bot().run()
