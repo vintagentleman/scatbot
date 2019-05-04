@@ -1,64 +1,93 @@
 import os
 import sys
-from collections import Counter, namedtuple
+import subprocess
 
-import psycopg2
-import yaml
-from psycopg2.extras import Json
+import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql import func
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+import yaml
 
-from utils import logger, get_db_url
-
-
-Task = namedtuple('Task', ['stem_id', 'word'])
+from orm import User, Task, Word, Answer
+from utils import logger, session_scope
 
 
 class Bot:
 
+    @property
+    def _db_url(self):
+        if MODE == 'prod':
+            return os.environ['DATABASE_URL']
+
+        proc = subprocess.run(
+            'heroku config:get DATABASE_URL -a scatbot', capture_output=True, shell=True, text=True
+        )
+
+        if proc.returncode != 0 or proc.stdout is None:
+            logger.error('Failed to retrieve Heroku database URL. Aborting')
+            sys.exit(1)
+        else:
+            logger.info('Successfully retrieved Heroku database URL')
+            return proc.stdout.strip()
+
     def _send_task(self, update, context):
-        with self._db_conn, self._db_conn.cursor() as curs:
-            curs.execute('SELECT id FROM stems WHERE completed = FALSE ORDER BY random() LIMIT 1;')
-            stem_id = curs.fetchone()[0]
-            curs.execute('SELECT word FROM words WHERE stem_id = %s;', (stem_id,))
-            self._current_task = Task(stem_id, curs.fetchone()[0])
+        """
+        Get a random unfinished task, associate it with the current user, and send it to them.
+        """
+        with session_scope(self._session) as session:
+            task = session.query(Task).filter_by(completed=False).order_by(func.random()).first()
+            word = session.query(Word).filter_by(task_id=task.id).order_by(func.random()).first()
+            session.query(User).filter_by(id=update.effective_user.id).one().current_task = task.id
+            context.bot.send_message(chat_id=update.message.chat_id, text=word.string)
+            logger.info('User {} received task {}'.format(update.effective_user.username, word.string))
 
-        context.bot.send_message(chat_id=update.message.chat_id, text=self._current_task.word)
-        logger.info('User {} received task {}'.format(update.message.chat_id, self._current_task.word))
+    def _save_answer(self, update):
+        """
+        Get the current task and associate it with the answer provided.
+        If the latter does not exist, add it, otherwise increase its total.
+        Mark the task as completed if the total of the answers given exceeds 5.
+        """
+        with session_scope(self._session) as session:
+            task_id = session.query(User).filter_by(id=update.effective_user.id).one().current_task
+            answer = session.query(Answer).filter_by(task_id=task_id).one_or_none()
 
-    def _save_answer(self, answer):
-        with self._db_conn, self._db_conn.cursor() as curs:
-            curs.execute('SELECT answers FROM stems WHERE id = %s;', (self._current_task.stem_id,))
-            data = curs.fetchone()[0]
+            if answer is None:
+                session.add(Answer(task_id=task_id, string=update.message.text.upper()))
+            else:
+                answer.total += 1
 
-            answers = Counter(data) if data is not None else Counter()
-            answers[answer] += 1
-
-            curs.execute(
-                'UPDATE stems SET answers = %s, completed = %s WHERE id = %s;',
-                (Json(answers), sum(answers.values()) > 5, self._current_task.stem_id)
-            )
+            total = session.query(func.sum(Answer.total)).filter_by(task_id=task_id).scalar()
+            session.query(Task).filter_by(id=task_id).one().completed = total > 5
+            session.query(User).filter_by(id=update.effective_user.id).one().tasks_done += 1
 
     def _start_callback(self, update, context):
-        logger.info('User {} started bot'.format(update.effective_user['id']))
+        logger.info('User {} started bot'.format(update.effective_user.username))
         context.bot.send_message(chat_id=update.message.chat_id, text=self._answers['start'])
+
+        with session_scope(self._session) as session:
+            if not session.query(User).filter_by(id=update.effective_user.id).count():
+                session.add(User(id=update.effective_user.id, name=update.effective_user.username))
+
         self._send_task(update, context)
 
     def _answer_callback(self, update, context):
-        logger.info('User {} answered {}'.format(update.effective_user['id'], update.message.text))
-        self._save_answer(update.message.text.upper())
+        logger.info('User {} answered {}'.format(update.effective_user.username, update.message.text))
+        self._save_answer(update)
         self._send_task(update, context)
 
     def __init__(self):
         self._token = os.getenv('TOKEN')
-        self._db_conn = psycopg2.connect(os.environ['DATABASE_URL'] if MODE == 'prod' else get_db_url('scatbot'))
-        self._updater = Updater(self._token, use_context=True, request_kwargs={'proxy_url': os.getenv('PROXY')})
+        self._engine = sa.create_engine(self._db_url)
+        self._session = sessionmaker(self._engine)
 
+        self._updater = Updater(self._token, use_context=True, request_kwargs={
+            'proxy_url': os.getenv('PROXY')
+        })
         self._updater.dispatcher.add_handler(CommandHandler('start', self._start_callback))
         self._updater.dispatcher.add_handler(MessageHandler(Filters.text, self._answer_callback))
 
         with open('answers.yaml', encoding='utf-8') as answers_conf:
             self._answers = yaml.load(answers_conf, Loader=yaml.Loader)
-        self._current_task = None
 
     def run(self):
         logger.info('Starting bot')
