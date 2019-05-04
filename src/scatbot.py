@@ -1,5 +1,6 @@
 import os
 import sys
+import random
 import subprocess
 from pathlib import Path
 
@@ -31,15 +32,26 @@ class Bot:
             LOGGER.info('Successfully retrieved Heroku database URL')
             return proc.stdout.strip()
 
+    @staticmethod
+    def _send_message(update, context, text):
+        if isinstance(text, list):
+            text = random.choice(text)
+        context.bot.send_message(chat_id=update.message.chat_id, text=text)
+
     def _send_task(self, update, context):
         """
-        Get a random unfinished task, associate it with the current user, and send it to them.
+        Get a random unfinished task and assign it to the current user.
         """
         with session_scope(self._session) as session:
             task = session.query(Task).filter_by(completed=False).order_by(func.random()).first()
+
+            if task is None:
+                self._send_message(update, context, self._answers['all_tasks_complete'])
+                return
+
             word = session.query(Word).filter_by(task_id=task.id).order_by(func.random()).first()
             session.query(User).filter_by(id=update.effective_user.id).one().current_task = task.id
-            context.bot.send_message(chat_id=update.message.chat_id, text=word.string)
+            self._send_message(update, context, word.string)
             LOGGER.info('User {} received task {}'.format(update.effective_user.username, word.string))
 
     def _save_answer(self, update):
@@ -63,7 +75,7 @@ class Bot:
 
     def _start_callback(self, update, context):
         LOGGER.info('User {} started bot'.format(update.effective_user.username))
-        context.bot.send_message(chat_id=update.message.chat_id, text=self._answers['start'])
+        self._send_message(update, context, self._answers['start'])
 
         with session_scope(self._session) as session:
             if not session.query(User).filter_by(id=update.effective_user.id).count():
@@ -76,6 +88,15 @@ class Bot:
         self._save_answer(update)
         self._send_task(update, context)
 
+    def _skip_callback(self, update, context):
+        self._send_task(update, context)
+
+    def _help_callback(self, update, context):
+        self._send_message(update, context, self._answers['help'])
+
+    def _catchall_callback(self, update, context):
+        self._send_message(update, context, self._answers['catchall'])
+
     def __init__(self):
         self._token = os.getenv('TOKEN')
         self._engine = sa.create_engine(self._db_url)
@@ -85,7 +106,10 @@ class Bot:
             'proxy_url': os.getenv('PROXY')
         })
         self._updater.dispatcher.add_handler(CommandHandler('start', self._start_callback))
-        self._updater.dispatcher.add_handler(MessageHandler(Filters.text, self._answer_callback))
+        self._updater.dispatcher.add_handler(CommandHandler('help', self._help_callback))
+        self._updater.dispatcher.add_handler(CommandHandler('skip', self._skip_callback))
+        self._updater.dispatcher.add_handler(MessageHandler(Filters.regex(r'[А-я+]'), self._answer_callback))
+        self._updater.dispatcher.add_handler(MessageHandler(Filters.text, self._catchall_callback))
 
         with Path.joinpath(Path(__file__).parent, 'answers.yaml').open(encoding='utf-8') as answers_conf:
             self._answers = yaml.load(answers_conf, Loader=yaml.Loader)
