@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
+from telegram import KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 import yaml
 
@@ -33,10 +34,13 @@ class Bot:
             return proc.stdout.strip()
 
     @staticmethod
-    def _send_message(update, context, text):
+    def _send_message(update, context, text, buttons=[]):
         if isinstance(text, list):
             text = random.choice(text)
-        context.bot.send_message(chat_id=update.message.chat_id, text=text)
+        reply_markup = None if not buttons else ReplyKeyboardMarkup(
+            [[KeyboardButton(button)] for button in buttons], resize_keyboard=True, one_time_keyboard=True
+        )
+        context.bot.send_message(chat_id=update.message.chat_id, text=text, reply_markup=reply_markup)
 
     def _send_task(self, update, context):
         """
@@ -51,7 +55,7 @@ class Bot:
 
             word = session.query(Word).filter_by(task_id=task.id).order_by(func.random()).first()
             session.query(User).filter_by(id=update.effective_user.id).one().current_task = task.id
-            self._send_message(update, context, word.string)
+            self._send_message(update, context, word.string, word.options)
             LOGGER.info('User {} received task {}'.format(update.effective_user.username, word.string))
 
     def _save_answer(self, update):
