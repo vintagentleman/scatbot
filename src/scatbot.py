@@ -55,7 +55,7 @@ class Bot:
 
             word = session.query(Word).filter_by(task_id=task.id).order_by(func.random()).first()
             session.query(User).filter_by(id=update.effective_user.id).one().current_task = task.id
-            self._send_message(update, context, word.string, word.options)
+            self._send_message(update, context, '{} ({})'.format(word.string, ', '.join(word.morph)), word.options)
             LOGGER.info('User {} received task {}'.format(update.effective_user.username, word.string))
 
     def _save_answer(self, update):
