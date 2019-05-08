@@ -47,7 +47,7 @@ class Bot:
         Get a random unfinished task and assign it to the current user.
         """
         with session_scope(self._session) as session:
-            task = session.query(Task).filter_by(completed=False).order_by(func.random()).first()
+            task = session.query(Task).filter(Task.lemma.is_(None)).order_by(func.random()).first()
 
             if task is None:
                 self._send_message(update, context, self._answers['all_tasks_complete'])
@@ -62,19 +62,22 @@ class Bot:
         """
         Get the current task and associate it with the answer provided.
         If the latter does not exist, add it, otherwise increase its total.
-        Mark the task as completed if the total of the answers given exceeds 5.
+        Mark the task as completed if the same answer was given 5 times before.
         """
+        string = update.message.text.upper()
+
         with session_scope(self._session) as session:
             task_id = session.query(User).filter_by(id=update.effective_user.id).one().current_task
-            answer = session.query(Answer).filter_by(task_id=task_id).one_or_none()
+            answer = session.query(Answer).filter_by(task_id=task_id, string=string).one_or_none()
 
             if answer is None:
-                session.add(Answer(task_id=task_id, string=update.message.text.upper()))
+                session.add(Answer(task_id=task_id, string=string))
             else:
                 answer.total += 1
 
-            total = session.query(func.sum(Answer.total)).filter_by(task_id=task_id).scalar()
-            session.query(Task).filter_by(id=task_id).one().completed = total > 5
+                if answer.total > 5:
+                    session.query(Task).filter_by(id=task_id).one().lemma = string
+
             session.query(User).filter_by(id=update.effective_user.id).one().tasks_done += 1
 
     def _start_callback(self, update, context):

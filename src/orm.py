@@ -22,7 +22,7 @@ class Task(Base):
 
     id = sa.Column(sa.Integer, primary_key=True)
     stem = sa.Column(sa.String, unique=True, nullable=False)
-    completed = sa.Column(sa.Boolean, default=False)
+    lemma = sa.Column(sa.String)
 
 
 class Word(Base):
